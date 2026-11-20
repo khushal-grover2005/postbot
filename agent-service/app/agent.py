@@ -1,4 +1,5 @@
 import logging
+import os
 from dotenv import load_dotenv
 from typing import Optional, TypedDict
 from pydantic import BaseModel
@@ -16,10 +17,32 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-llm = ChatOpenAI(
-    model="gpt-4o-mini",
-    temperature=0,
-)
+def _create_llm():
+    """Select an LLM provider from environment variables (Groq, Gemini, or OpenAI)."""
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    gemini_key = (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or "").strip()
+
+    if provider == "groq" or (not provider and groq_key):
+        from langchain_groq import ChatGroq
+
+        model = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
+        logger.info("Using Groq LLM: %s", model)
+        return ChatGroq(model=model, api_key=groq_key, temperature=0)
+
+    if provider in {"gemini", "google"} or (not provider and gemini_key):
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        model = os.getenv("LLM_MODEL", "gemini-2.0-flash")
+        logger.info("Using Gemini LLM: %s", model)
+        return ChatGoogleGenerativeAI(model=model, google_api_key=gemini_key, temperature=0)
+
+    model = os.getenv("LLM_MODEL", "gpt-4o-mini")
+    logger.info("Using OpenAI LLM: %s", model)
+    return ChatOpenAI(model=model, temperature=0)
+
+
+llm = _create_llm()
 
 
 # Define the State for the Agent
