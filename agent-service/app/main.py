@@ -25,6 +25,11 @@ app = FastAPI(
 )
 
 
+@app.get("/")
+async def root():
+    return {"status": "ok", "service": "PostBot 3000 - Agent Service"}
+
+
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}

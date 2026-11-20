@@ -1,3 +1,4 @@
+from functools import lru_cache
 import logging
 import os
 from dotenv import load_dotenv
@@ -23,8 +24,9 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 
-def _create_llm():
-    """Select an LLM provider from environment variables (Groq, Gemini, or OpenAI)."""
+@lru_cache(maxsize=1)
+def get_llm():
+    """Lazily initialize an LLM provider from environment variables (Groq, Gemini, or OpenAI)."""
     provider = os.getenv("LLM_PROVIDER", "").strip().lower()
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
     gemini_key = (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or "").strip()
@@ -46,9 +48,6 @@ def _create_llm():
     model = os.getenv("LLM_MODEL", "gpt-4o-mini")
     logger.info("Using OpenAI LLM: %s", model)
     return ChatOpenAI(model=model, temperature=0)
-
-
-llm = _create_llm()
 
 
 # Define the State for the Agent
@@ -79,7 +78,7 @@ def editor_node(state: OverallState):
         ```
     """.strip()
 
-    response = llm.invoke([SystemMessage(EDITOR_PROMPT), HumanMessage(prompt)])
+    response = get_llm().invoke([SystemMessage(EDITOR_PROMPT), HumanMessage(prompt)])
     logger.info("editor_node response: %s", response.content)
 
     return {"edit_text": response.content}
@@ -119,7 +118,7 @@ def tweet_writer_node(state: OverallState):
         Write only the text for the post
     """.strip()
 
-    response = llm.invoke([SystemMessage(TWITTER_PROMPT), HumanMessage(prompt)])
+    response = get_llm().invoke([SystemMessage(TWITTER_PROMPT), HumanMessage(prompt)])
     logger.info("tweet_writer_node response: %s", response.content)
     return {
         "tweet": {
@@ -163,7 +162,7 @@ def linkedin_writer_node(state: OverallState):
         Write only the text for the post
     """.strip()
 
-    response = llm.invoke([SystemMessage(LINKEDIN_PROMPT), HumanMessage(prompt)])
+    response = get_llm().invoke([SystemMessage(LINKEDIN_PROMPT), HumanMessage(prompt)])
     logger.info("linkedin_writer_node response: %s", response.content)
     return {
         "linkedin_post": {
@@ -191,7 +190,7 @@ def critique_tweet_node(state: OverallState):
         Target audience: {state["target_audience"]}
     """.strip()
 
-    response = llm.invoke([SystemMessage(TWITTER_CRITIQUE_PROMPT), HumanMessage(prompt)])
+    response = get_llm().invoke([SystemMessage(TWITTER_CRITIQUE_PROMPT), HumanMessage(prompt)])
     logger.info("critique_tweet_node response: %s", response.content)
     return {
         "tweet": {
@@ -219,7 +218,7 @@ def critique_linkedin_node(state: OverallState):
         Target audience: {state["target_audience"]}
     """.strip()
 
-    response = llm.invoke([SystemMessage(LINKEDIN_CRITIQUE_PROMPT), HumanMessage(prompt)])
+    response = get_llm().invoke([SystemMessage(LINKEDIN_CRITIQUE_PROMPT), HumanMessage(prompt)])
     logger.info("critique_linkedin_node response: %s", response.content)
     return {
         "linkedin_post": {
