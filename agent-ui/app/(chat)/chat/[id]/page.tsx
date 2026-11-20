@@ -5,6 +5,8 @@ import { getChat, getMissingKeys } from '@/app/actions'
 import { ChatWithArtifacts } from '@/components/chat-with-artifacts'
 import { auth } from '@clerk/nextjs/server'
 
+export const maxDuration = 60
+
 export interface ChatPageProps {
   params: {
     id: string

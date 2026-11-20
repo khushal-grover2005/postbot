@@ -5,6 +5,8 @@ import { getMissingKeys } from '@/app/actions'
 import { ChatWithArtifacts } from '@/components/chat-with-artifacts'
 import { generateId } from 'ai'
 
+export const maxDuration = 60
+
 export default async function IndexPage() {
   const id = generateId()
   const { userId } = auth()
