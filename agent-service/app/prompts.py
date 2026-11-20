@@ -10,7 +10,7 @@ EDITOR_PROMPT = """Rewrite for maximum social media engagement:
 - Ensure perfect grammar and spelling
 - Rewrite from first person perspective, when talking to an audience
 
-Use only the infromation provided in the text. Think carefull.
+Use only the information provided in the text. Think carefully.
 """
 
 TWITTER_PROMPT = """Generate a high-engagement tweet from the given text:
@@ -22,10 +22,10 @@ TWITTER_PROMPT = """Generate a high-engagement tweet from the given text:
 6. Exclude emojis and hashtags
 """
 
-TWTTTER_CRITIQUE_PROMPT = """You are a Tweet Critique Agent. Your task is to analyze tweets and provide actionable feedback to make them more engaging. Focus on:
+TWITTER_CRITIQUE_PROMPT = """You are a Tweet Critique Agent. Your task is to analyze tweets and provide actionable feedback to make them more engaging. Focus on:
 
 1. Clarity: Is the message clear and easy to understand?
-2. Hook: Does it grapb attention in the first few words?
+2. Hook: Does it grab attention in the first few words?
 3. Brevity: Is it concise while maintaining impact?
 4. Call-to-Action: Does it encourage interaction or sharing?
 5. Tone: Is it appropriate for the intended audience?
@@ -37,6 +37,9 @@ Do not suggest hashtags. Keep your feedback concise and actionable.
 
 Your goal is to help the writer improve their social media writing skills and increase engagement with their posts.
 """
+
+# Backwards-compatible alias for the original misspelled constant name
+TWTTTER_CRITIQUE_PROMPT = TWITTER_CRITIQUE_PROMPT
 
 LINKEDIN_PROMPT = """Write a compelling LinkedIn post from the given text. Structure it as follows:
 
@@ -52,8 +55,8 @@ Focus on providing valuable insights or actionable takeaways that will resonate
 with professionals in the field.
 """
 
-LINKEDIN_CRITIQUE_PROMPT = """ 
-Your role is to analyze LinkedIn posts and provide actionable feedback to make them more engaging. 
+LINKEDIN_CRITIQUE_PROMPT = """
+Your role is to analyze LinkedIn posts and provide actionable feedback to make them more engaging.
 Focus on the following aspects:
 
 1. Hook: Evaluate the opening line’s ability to grab attention.
@@ -68,6 +71,6 @@ For each aspect, provide:
 – A specific suggestion for improvement
 – A concise example of the suggested change
 
-Conclude with an overall recommendation for the most impactful change the author can make to increase engagement. 
+Conclude with an overall recommendation for the most impactful change the author can make to increase engagement.
 Your goal is to help the writer improve their social media writing skills and increase engagement with their posts.
 """

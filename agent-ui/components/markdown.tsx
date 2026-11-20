@@ -1,7 +1,7 @@
 import { FC, memo } from 'react'
 import ReactMarkdown, { Options } from 'react-markdown'
 
-const components = {
+const defaultComponents = {
   h1: (props: any) => (
     <h1 className="text-2xl lg:text-3xl scroll-m-20 font-extrabold tracking-tight text-neutral-900 dark:text-neutral-300">
       {props.children}
@@ -27,7 +27,7 @@ const components = {
       {props.children}
     </p>
   ),
-  blockqoute: (props: any) => (
+  blockquote: (props: any) => (
     <blockquote className="mt-6 border-l-2 border-emerald-400 pl-6 italic dark:border-emerald-300">
       {props.children}
     </blockquote>
@@ -48,14 +48,14 @@ const components = {
     </sup>
   ),
   a: ({ href, children }: any) => {
-    const isInternalLink = href.startsWith('#')
+    const isInternalLink = Boolean(href?.startsWith('#'))
 
     return (
       <a
         href={href}
         // If it's an internal link, don't add target and rel attributes
         target={isInternalLink ? '_self' : '_blank'}
-        rel={isInternalLink ? '' : 'noopener noreferrer'}
+        rel={isInternalLink ? undefined : 'noopener noreferrer'}
         className="text-emerald-700 underline dark:text-emerald-300"
       >
         {children}
@@ -63,7 +63,7 @@ const components = {
     )
   },
   li: (props: any) => (
-    <li className="my-2 ml-6 list-decimal text-neutral-900 dark:text-neutral-300 [&>li]:mt-2">
+    <li className="my-2 text-neutral-900 dark:text-neutral-300 [&>li]:mt-2">
       {props.children}
     </li>
   ),
@@ -75,7 +75,12 @@ const components = {
 }
 
 export const MemoizedReactMarkdown: FC<Options> = memo(
-  props => <ReactMarkdown components={components} {...props} />,
+  ({ components: customComponents, ...props }) => (
+    <ReactMarkdown
+      components={{ ...defaultComponents, ...customComponents }}
+      {...props}
+    />
+  ),
   (prevProps, nextProps) =>
     prevProps.children === nextProps.children &&
     prevProps.className === nextProps.className

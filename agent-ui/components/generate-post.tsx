@@ -1,28 +1,31 @@
 'use client'
-import type { AI } from '@/app/(chat)/actions'
+import type { AI, UIState } from '@/app/(chat)/actions'
 import { UserMessage } from '@/components/message'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { SignIn, useUser } from '@clerk/nextjs'
 import { generateId } from 'ai'
-import { useAIState, useActions, useUIState } from 'ai/rsc'
+import { useActions, useUIState } from 'ai/rsc'
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 export const GeneratePostButton = () => {
-  const [aiState] = useAIState()
-  const [messages, setMessages] = useUIState<typeof AI>()
-  const { showForm } = useActions()
+  const [, setMessages] = useUIState<typeof AI>()
+  const { showForm } = useActions<typeof AI>()
   const { user } = useUser()
   const [showSignIn, setShowSignIn] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
 
   const handleClicked = async () => {
     if (!user) {
       setShowSignIn(true)
       return
-      // return <SignIn />
     }
 
-    setMessages(currentMessages => [
+    if (isLoading) return
+    setIsLoading(true)
+
+    setMessages((currentMessages: UIState[]) => [
       ...currentMessages,
       {
         id: generateId(),
@@ -35,15 +38,25 @@ export const GeneratePostButton = () => {
       }
     ])
 
-    const responseMessage = await showForm(
-      'PostBot 3000, generate engaging posts for me!'
-    )
+    try {
+      const responseMessage = await showForm(
+        'PostBot 3000, generate engaging posts for me!'
+      )
 
-    setMessages(currentMessages => [...currentMessages, responseMessage])
+      setMessages((currentMessages: UIState[]) => [
+        ...currentMessages,
+        responseMessage
+      ])
+    } catch (error) {
+      console.error('Failed to open post form:', error)
+      toast.error('Failed to start a new post. Please try again.')
+    } finally {
+      setIsLoading(false)
+    }
   }
 
-  const handleDialogClose = () => {
-    setShowSignIn(false)
+  const handleDialogClose = (open: boolean) => {
+    setShowSignIn(open)
   }
 
   return (
@@ -52,12 +65,13 @@ export const GeneratePostButton = () => {
         className="px-8 text-lg w-full rounded-full drop-shadow"
         size={'lg'}
         onClick={handleClicked}
+        disabled={isLoading}
       >
-        Generate a Post
+        {isLoading ? 'Loading...' : 'Generate a Post'}
       </Button>
       <Dialog open={showSignIn} onOpenChange={handleDialogClose}>
         <DialogContent className="flex items-center justify-center bg-transparent border-none shadow-none">
-          <SignIn />
+          <SignIn routing="hash" />
         </DialogContent>
       </Dialog>
     </>

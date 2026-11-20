@@ -16,10 +16,10 @@ import { RemoteRunnable } from 'langchain/runnables/remote'
 import { ReactNode } from 'react'
 import { saveChat } from '../actions'
 
-const showForm = async (input: string) => {
+const showForm = async (input: string): Promise<UIState> => {
   'use server'
 
-  const aiState = getMutableAIState()
+  const aiState = getMutableAIState<typeof AI>()
   const messageId = generateId()
   const chatId = aiState.get().chatId
 
@@ -36,8 +36,6 @@ const showForm = async (input: string) => {
   })
 
   const uiStream = createStreamableUI(<SpinnerMessage />)
-  uiStream.update(<SpinnerMessage />)
-
   const aiMessageId = generateId()
 
   await new Promise<void>(resolve => {
@@ -47,7 +45,7 @@ const showForm = async (input: string) => {
       </BotCard>
     )
     setTimeout(() => {
-      uiStream.update(
+      uiStream.done(
         <BotCard>
           <div>
             <PostGeneratorForm id={aiMessageId} />
@@ -58,7 +56,6 @@ const showForm = async (input: string) => {
     }, 200)
   })
 
-  uiStream.done()
   aiState.done({
     ...aiState.get(),
     chatId: chatId,
@@ -79,7 +76,7 @@ const showForm = async (input: string) => {
   })
 
   return {
-    id: generateId(),
+    id: aiMessageId,
     role: 'ai',
     display: uiStream.value
   }
@@ -93,45 +90,47 @@ const sendMessage = async (
 ): Promise<UIState> => {
   'use server'
 
-  const aiState = getMutableAIState()
-  const messageId = generateId()
+  const aiState = getMutableAIState<typeof AI>()
+  const humanMessageId = generateId()
+  const aiMessageId = generateId()
   const chatId = aiState.get().chatId
+
+  const sanitizedDrafts = Math.max(1, Math.min(5, Number(n_drafts) || 1))
+
+  const existingMessages = [...aiState.get().messages]
+  const existingMessageIndex = existingMessages.findIndex(
+    message => message.id === postForm300Id
+  )
+
+  if (existingMessageIndex !== -1) {
+    existingMessages[existingMessageIndex] = {
+      ...existingMessages[existingMessageIndex],
+      content: JSON.stringify({
+        postDetails: input,
+        audience: audience,
+        drafts: String(sanitizedDrafts),
+        id: postForm300Id
+      })
+    }
+  }
 
   aiState.update({
     ...aiState.get(),
     messages: [
-      ...aiState.get().messages,
+      ...existingMessages,
       {
-        id: messageId,
+        id: humanMessageId,
         role: 'human',
         content: input
       }
     ]
   })
 
-  const existingMessageIndex = aiState
-    .get()
-    .messages.findIndex((message: any) => message.id === postForm300Id)
-
-  if (existingMessageIndex !== -1) {
-    const updatedMessages = [...aiState.get().messages]
-    updatedMessages[existingMessageIndex] = {
-      ...updatedMessages[existingMessageIndex],
-      content: JSON.stringify({
-        postDetails: input,
-        audience: audience,
-        drafts: n_drafts,
-        id: postForm300Id
-      })
-    }
-
-    aiState.update({
-      ...aiState.get(),
-      messages: updatedMessages
-    })
-  }
-
-  const uiStream = createStreamableUI()
+  const uiStream = createStreamableUI(
+    <BotCard>
+      <LoadingSpinnerWithMessage message={getLoadingMessage('editing')} />
+    </BotCard>
+  )
 
   let streamData: AgentState = {
     tweet: {
@@ -142,15 +141,27 @@ const sendMessage = async (
       drafts: [],
       feedback: ''
     },
-    n_drafts: n_drafts,
+    n_drafts: sanitizedDrafts,
     target_audience: audience,
     edit_text: '',
     user_text: input,
     workflow_status: ''
   }
 
+  const cloneStreamData = (): AgentState => ({
+    ...streamData,
+    tweet: {
+      drafts: [...streamData.tweet.drafts],
+      feedback: streamData.tweet.feedback
+    },
+    linkedin_post: {
+      drafts: [...streamData.linkedin_post.drafts],
+      feedback: streamData.linkedin_post.feedback
+    }
+  })
+
   ;(async () => {
-    uiStream.update(<SpinnerMessage />)
+    let completed = false
 
     const remoteChain = new RemoteRunnable({
       url: process.env.AGENT_URL || 'http://localhost:8000',
@@ -159,162 +170,197 @@ const sendMessage = async (
       }
     })
 
-    const stream = remoteChain.streamEvents(
-      {
-        user_text: input,
-        target_audience: audience,
-        edit_text: '',
-        tweet: {
-          drafts: [],
-          feedback: ''
-        },
-        linkedin_post: {
-          drafts: [],
-          feedback: ''
-        },
-        n_drafts: n_drafts,
-        workflow_status: ''
-      },
-      {
-        version: 'v2',
-        configurable: {
-          thread_id: chatId || '',
-          checkpoint_ns: '',
-          checkpoint_id: ''
-        }
-      }
-    )
-
     try {
-      let lastEventKey = ''
+      const stream = remoteChain.streamEvents(
+        {
+          user_text: input,
+          target_audience: audience,
+          edit_text: '',
+          tweet: {
+            drafts: [],
+            feedback: ''
+          },
+          linkedin_post: {
+            drafts: [],
+            feedback: ''
+          },
+          n_drafts: sanitizedDrafts,
+          workflow_status: ''
+        },
+        {
+          version: 'v2',
+          configurable: {
+            thread_id: chatId || '',
+            checkpoint_ns: '',
+            checkpoint_id: ''
+          }
+        }
+      )
 
       for await (const event of stream) {
         const eventType = event.event
         const eventName = event.name
-        const eventKey = `${eventName}-${eventType}`
-
-        if (eventKey !== lastEventKey) {
-          console.log('Event type:', eventType)
-          console.log('Event name:', eventName)
-          lastEventKey = eventKey
-        }
 
         if (eventType === 'on_chain_end') {
-          const data = event.data.output
+          const data = event.data?.output
+          if (!data || typeof data !== 'object') continue
+
           switch (eventName) {
             case 'editor':
-              break
-            case 'tweet_writer':
-              console.log('tweet_writer data:', data)
-              streamData.tweet = {
-                drafts: [...data.tweet.drafts],
-                feedback: data.tweet.feedback
+              if (data.edit_text) {
+                streamData.edit_text = data.edit_text
               }
               uiStream.update(
                 <BotCard>
-                  <div className="flex flex-col gap-4 ">
+                  <LoadingSpinnerWithMessage
+                    message={getLoadingMessage('tweetWriting')}
+                  />
+                </BotCard>
+              )
+              break
+            case 'tweet_writer':
+              if (data.tweet) {
+                streamData.tweet = {
+                  drafts: [...(data.tweet.drafts || [])],
+                  feedback: data.tweet.feedback || ''
+                }
+              }
+              uiStream.update(
+                <BotCard>
+                  <div className="flex flex-col gap-4">
                     <LoadingSpinnerWithMessage
                       message={getLoadingMessage('tweetWriting')}
                     />
-                    <SocialMediaPost agentBody={streamData} chatId={chatId} />
+                    <SocialMediaPost
+                      agentBody={cloneStreamData()}
+                      chatId={chatId}
+                      messageId={aiMessageId}
+                    />
                   </div>
                 </BotCard>
               )
               break
             case 'linkedin_writer':
-              console.log('linkedin_writer data:', data)
-              streamData.linkedin_post = {
-                drafts: [...data.linkedin_post.drafts],
-                feedback: data.linkedin_post.feedback
+              if (data.linkedin_post) {
+                streamData.linkedin_post = {
+                  drafts: [...(data.linkedin_post.drafts || [])],
+                  feedback: data.linkedin_post.feedback || ''
+                }
               }
               uiStream.update(
                 <BotCard>
-                  <div className="flex flex-col gap-4 ">
+                  <div className="flex flex-col gap-4">
                     <LoadingSpinnerWithMessage
                       message={getLoadingMessage('linkedInWriting')}
                     />
-                    <SocialMediaPost agentBody={streamData} chatId={chatId} />
+                    <SocialMediaPost
+                      agentBody={cloneStreamData()}
+                      chatId={chatId}
+                      messageId={aiMessageId}
+                    />
                   </div>
                 </BotCard>
               )
               break
             case 'supervisor':
-              streamData.edit_text = data.edit_text
-              streamData.workflow_status = data.workflow_status
-              if (data.workflow_status === 'completed') {
-                console.log('supervisor data case completed: \n', data)
-                streamData = data
+              streamData = {
+                ...streamData,
+                ...data,
+                tweet: data.tweet
+                  ? {
+                      drafts: [...(data.tweet.drafts || [])],
+                      feedback: data.tweet.feedback || ''
+                    }
+                  : streamData.tweet,
+                linkedin_post: data.linkedin_post
+                  ? {
+                      drafts: [...(data.linkedin_post.drafts || [])],
+                      feedback: data.linkedin_post.feedback || ''
+                    }
+                  : streamData.linkedin_post
+              }
 
+              if (streamData.workflow_status === 'completed') {
+                completed = true
+                const finalState = cloneStreamData()
+
+                // Store only plain JSON-serializable data in AIState (never JSX)
                 aiState.done({
                   ...aiState.get(),
                   chatId: chatId,
                   messages: [
                     ...aiState.get().messages,
                     {
-                      id: generateId(),
+                      id: aiMessageId,
                       role: 'ai',
                       name: 'AgentResponse',
-                      content: JSON.stringify(streamData),
-                      display: (
-                        <BotCard>
-                          <div className="flex flex-col gap-4 ">
-                            <SocialMediaPost
-                              agentBody={streamData}
-                              chatId={chatId}
-                            />
-                          </div>
-                        </BotCard>
-                      )
+                      content: JSON.stringify(finalState)
                     }
                   ]
                 })
 
-                uiStream.update(
+                uiStream.done(
                   <BotCard>
-                    <div className="flex flex-col gap-4 ">
-                      <SocialMediaPost agentBody={streamData} chatId={chatId} />
+                    <div className="flex flex-col gap-4">
+                      <SocialMediaPost
+                        agentBody={finalState}
+                        chatId={chatId}
+                        messageId={aiMessageId}
+                      />
                     </div>
                   </BotCard>
                 )
-              } else if (data.workflow_status === 'in_progress') {
-                console.log('supervisor data case in_progress: \n', data)
-
+              } else if (streamData.workflow_status === 'in_progress') {
                 uiStream.update(
                   <BotCard>
-                    <div className="flex flex-col gap-4 ">
+                    <div className="flex flex-col gap-4">
                       <LoadingSpinnerWithMessage
                         message={getLoadingMessage('review')}
                       />
-                      <SocialMediaPost agentBody={streamData} chatId={chatId} />
+                      <SocialMediaPost
+                        agentBody={cloneStreamData()}
+                        chatId={chatId}
+                        messageId={aiMessageId}
+                      />
                     </div>
                   </BotCard>
                 )
               }
               break
             case 'tweet_critique':
-              console.log('tweet_critique data:', data)
-              streamData.tweet.feedback = data.tweet.feedback
+              if (data.tweet?.feedback !== undefined) {
+                streamData.tweet.feedback = data.tweet.feedback
+              }
               uiStream.update(
                 <BotCard>
-                  <div className="flex flex-col gap-4 ">
+                  <div className="flex flex-col gap-4">
                     <LoadingSpinnerWithMessage
                       message={getLoadingMessage('critique')}
                     />
-                    <SocialMediaPost agentBody={streamData} chatId={chatId} />
+                    <SocialMediaPost
+                      agentBody={cloneStreamData()}
+                      chatId={chatId}
+                      messageId={aiMessageId}
+                    />
                   </div>
                 </BotCard>
               )
               break
             case 'linkedin_critique':
-              console.log('linkedin_critique data:', data)
-              streamData.linkedin_post.feedback = data.linkedin_post.feedback
+              if (data.linkedin_post?.feedback !== undefined) {
+                streamData.linkedin_post.feedback = data.linkedin_post.feedback
+              }
               uiStream.update(
                 <BotCard>
-                  <div className="flex flex-col gap-4 ">
+                  <div className="flex flex-col gap-4">
                     <LoadingSpinnerWithMessage
                       message={getLoadingMessage('critique')}
                     />
-                    <SocialMediaPost agentBody={streamData} chatId={chatId} />
+                    <SocialMediaPost
+                      agentBody={cloneStreamData()}
+                      chatId={chatId}
+                      messageId={aiMessageId}
+                    />
                   </div>
                 </BotCard>
               )
@@ -322,15 +368,59 @@ const sendMessage = async (
           }
         }
       }
+
+      if (!completed) {
+        const finalState = cloneStreamData()
+        aiState.done({
+          ...aiState.get(),
+          chatId: chatId,
+          messages: [
+            ...aiState.get().messages,
+            {
+              id: aiMessageId,
+              role: 'ai',
+              name: 'AgentResponse',
+              content: JSON.stringify(finalState)
+            }
+          ]
+        })
+        uiStream.done(
+          <BotCard>
+            <div className="flex flex-col gap-4">
+              <SocialMediaPost
+                agentBody={finalState}
+                chatId={chatId}
+                messageId={aiMessageId}
+              />
+            </div>
+          </BotCard>
+        )
+      }
     } catch (error) {
       console.error('Error processing stream:', error)
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : 'Failed to generate posts. Please try again.'
+
+      if (!completed) {
+        aiState.done({
+          ...aiState.get(),
+          chatId: chatId
+        })
+        uiStream.done(
+          <BotCard>
+            <div className="text-sm text-red-600">
+              Something went wrong while generating your posts: {errorMessage}
+            </div>
+          </BotCard>
+        )
+      }
     }
-  })().catch(error => {
-    console.error('Error in async function:', error)
-  })
+  })()
 
   return {
-    id: messageId,
+    id: aiMessageId,
     role: 'ai',
     display: uiStream.value
   }
@@ -348,7 +438,12 @@ export type UIState = {
   spinner?: ReactNode
 }
 
-export const AI = createAI<AIState, UIState[]>({
+export type AIActions = {
+  sendMessage: typeof sendMessage
+  showForm: typeof showForm
+}
+
+export const AI = createAI<AIState, UIState[], AIActions>({
   initialAIState: {
     chatId: generateId(),
     messages: []
@@ -358,7 +453,13 @@ export const AI = createAI<AIState, UIState[]>({
     sendMessage,
     showForm
   },
-  onSetAIState: async ({ state, done }) => {
+  onSetAIState: async ({
+    state,
+    done
+  }: {
+    state: AIState
+    done: boolean
+  }) => {
     'use server'
 
     if (!done) return
@@ -367,12 +468,16 @@ export const AI = createAI<AIState, UIState[]>({
     if (!userId) return
 
     const { chatId, messages } = state
+    if (!messages?.length) return
 
     const createdAt = new Date()
     const path = `/chat/${chatId}`
 
+    const postDetailsMessage = messages.find(
+      (msg, idx) => msg.role === 'human' && idx > 0 && msg.content
+    )
     const firstMessageContent =
-      (messages[0].content as string) || 'PostBot 3000'
+      postDetailsMessage?.content || messages[0]?.content || 'PostBot 3000'
     const title = firstMessageContent.substring(0, 100)
 
     const chat: Chat = {
@@ -404,34 +509,54 @@ export const AI = createAI<AIState, UIState[]>({
   }
 })
 
+function safeParseJson<T>(raw: string): T | null {
+  try {
+    return JSON.parse(raw) as T
+  } catch {
+    return null
+  }
+}
+
 export const getUIStateFromAIState = (aiState: Chat): UIState[] => {
   const chatId = aiState.chatId
-  return aiState.messages.map((message, index) => {
+  const messages = Array.isArray(aiState.messages) ? aiState.messages : []
+
+  return messages.map((message, index) => {
     if (message.role === 'ai') {
       if (message.name === 'PostBot3000Form') {
-        const data = JSON.parse(message.content)
+        const data = safeParseJson<{
+          postDetails?: string
+          audience?: string
+          drafts?: string | number
+          id?: string
+        }>(message.content)
+
         return {
           id: `${aiState.chatId}-${index}`,
           role: message.role,
           display: (
             <BotCard>
               <PostGeneratorForm
-                initialPostDetails={data.postDetails}
-                initialAudience={data.audience}
-                initialDrafts={data.drafts}
-                id={data.id}
+                initialPostDetails={data?.postDetails || ''}
+                initialAudience={data?.audience || ''}
+                initialDrafts={String(data?.drafts ?? '1')}
+                id={data?.id || `${aiState.chatId}-${index}`}
               />
             </BotCard>
           )
         }
       } else if (message.name === 'AgentResponse') {
-        const data = JSON.parse(message.content)
+        const data = safeParseJson<AgentState>(message.content)
         return {
           id: `${aiState.chatId}-${index}`,
           role: message.role,
           display: (
             <BotCard>
-              <SocialMediaPost agentBody={data} chatId={chatId} />
+              <SocialMediaPost
+                agentBody={data || {}}
+                chatId={chatId}
+                messageId={message.id}
+              />
             </BotCard>
           )
         }
@@ -439,14 +564,12 @@ export const getUIStateFromAIState = (aiState: Chat): UIState[] => {
         return {
           id: `${aiState.chatId}-${index}`,
           role: message.role,
-          display: message.display
+          display: (
+            <BotCard>
+              <p>{message.content}</p>
+            </BotCard>
+          )
         }
-      }
-    } else if (message.role === 'human') {
-      return {
-        id: `${aiState.chatId}-${index}`,
-        role: message.role,
-        display: <UserMessage>{message.content}</UserMessage>
       }
     }
 

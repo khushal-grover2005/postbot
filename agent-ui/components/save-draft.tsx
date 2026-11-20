@@ -26,41 +26,46 @@ export const SaveDraft = ({
   const [isDraftSaved, setIsDraftSaved] = useState(false)
 
   useEffect(() => {
+    let cancelled = false
+
     const checkDraftStatus = async () => {
       if (userId) {
         const result = await getPost(artifactId, userId)
-        setIsDraftSaved(result !== null)
+        if (!cancelled) {
+          setIsDraftSaved(Boolean(result && !('error' in result)))
+        }
       }
     }
 
     checkDraftStatus()
+    return () => {
+      cancelled = true
+    }
   }, [artifactId, userId])
 
   if (!userId) {
     return null
   }
 
-  // console.log('chatId', chatId)
-
-  const payload = {
-    draft,
-    authorId: userId,
-    createdAt: new Date().toISOString(),
-    published: false,
-    title: 'Draft',
-    updatedAt: new Date().toISOString(),
-    platform,
-    chatId,
-    artifactId
-  } satisfies ContentPost
-
   const handleSaveDraft = async () => {
     setIsLoading(true)
+
+    const payload: ContentPost = {
+      draft,
+      authorId: userId,
+      createdAt: new Date().toISOString(),
+      published: false,
+      title: draft.slice(0, 60) || `${platform} Draft`,
+      updatedAt: new Date().toISOString(),
+      platform,
+      chatId,
+      artifactId
+    }
 
     const result = await savePost(payload)
     setIsLoading(false)
 
-    if (result && result.error) {
+    if (result && 'error' in result && result.error) {
       toast.error(result.error)
       return
     }
@@ -73,6 +78,7 @@ export const SaveDraft = ({
     <Button
       className="hover:border w-full flex-1 flex items-center"
       variant={'secondary'}
+      type="button"
       onClick={handleSaveDraft}
       disabled={isLoading || isDraftSaved}
     >

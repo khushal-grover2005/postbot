@@ -6,7 +6,31 @@ import { redirect } from 'next/navigation'
 
 import { auth, currentUser } from '@clerk/nextjs/server'
 
-import { ContentPost, type Chat } from '@/lib/types'
+import { ContentPost, Message, type Chat } from '@/lib/types'
+
+function sanitizeMessages(messages: unknown): Message[] {
+  if (!Array.isArray(messages)) {
+    return []
+  }
+
+  return messages.map((message: any) => {
+    const clean: Message = {
+      role: message.role,
+      content: typeof message.content === 'string' ? message.content : ''
+    }
+    if (message.id) clean.id = message.id
+    if (message.name) clean.name = message.name
+    return clean
+  })
+}
+
+function sanitizeChat(chat: Chat | null): Chat | null {
+  if (!chat) return null
+  return {
+    ...chat,
+    messages: sanitizeMessages(chat.messages)
+  }
+}
 
 export async function getChats(userId?: string | null) {
   const { userId: session } = auth()
@@ -24,10 +48,15 @@ export async function getChats(userId?: string | null) {
   }
 
   try {
-    const pipeline = redis.pipeline()
     const chats: string[] = await redis.zrange(`user:chat:${userId}`, 0, -1, {
       rev: true
     })
+
+    if (!chats.length) {
+      return []
+    }
+
+    const pipeline = redis.pipeline()
 
     for (const chat of chats) {
       pipeline.hgetall(chat)
@@ -35,7 +64,9 @@ export async function getChats(userId?: string | null) {
 
     const results = await pipeline.exec()
 
-    return results as Chat[]
+    return (results as (Chat | null)[])
+      .filter((chat): chat is Chat => Boolean(chat && chat.chatId))
+      .map(chat => sanitizeChat(chat)!)
   } catch (error) {
     return []
   }
@@ -64,7 +95,7 @@ export async function getChat(id: string, userId: string) {
     return null
   }
 
-  return chat
+  return sanitizeChat(chat)
 }
 
 export async function removeChat({ id, path }: { id: string; path: string }) {
@@ -129,7 +160,7 @@ export async function getSharedChat(id: string) {
     return null
   }
 
-  return chat
+  return sanitizeChat(chat)
 }
 
 export async function shareChat(id: string) {
@@ -152,7 +183,7 @@ export async function shareChat(id: string) {
   }
 
   const payload = {
-    ...chat,
+    ...sanitizeChat(chat)!,
     sharePath: `/share/${chat.chatId}`
   }
 
@@ -165,17 +196,18 @@ export async function saveChat(chat: Chat) {
   const { userId: session } = auth()
   const user = await currentUser()
 
-  console.log('Saving chat', chat)
-
   if (session && user) {
+    const cleanChat: Chat = {
+      ...chat,
+      messages: sanitizeMessages(chat.messages)
+    }
     const pipeline = redis.pipeline()
-    pipeline.hmset(`chat:${chat.chatId}`, chat)
-    pipeline.zadd(`user:chat:${chat.userId}`, {
+    pipeline.hmset(`chat:${cleanChat.chatId}`, cleanChat)
+    pipeline.zadd(`user:chat:${cleanChat.userId}`, {
       score: Date.now(),
-      member: `chat:${chat.chatId}`
+      member: `chat:${cleanChat.chatId}`
     })
     await pipeline.exec()
-    console.log('Chat saved')
   } else {
     return
   }
@@ -198,6 +230,10 @@ export async function getMissingKeys() {
   return keysRequired
     .map(key => (process.env[key] ? '' : key))
     .filter(key => key !== '')
+}
+
+function isPublishedValue(value: unknown): boolean {
+  return value === '1' || value === 1 || value === true
 }
 
 export async function savePost(post: ContentPost) {
@@ -228,6 +264,7 @@ export async function savePost(post: ContentPost) {
     member: postId
   })
 
+  revalidatePath('/drafts')
   return { success: true, postId }
 }
 
@@ -248,7 +285,7 @@ export async function getPost(postId: string, userId: string) {
   return {
     ...post,
     draft: post.draft,
-    published: post.published === '1' ? true : false
+    published: isPublishedValue(post.published)
   }
 }
 
@@ -272,9 +309,8 @@ export async function updatePost(
 
   const updatedPayload = {
     ...existingPost,
-    draft: updatedPost.draft
-      ? JSON.stringify(updatedPost.draft)
-      : existingPost.draft,
+    draft:
+      updatedPost.draft !== undefined ? updatedPost.draft : existingPost.draft,
     published:
       updatedPost.published !== undefined
         ? updatedPost.published
@@ -286,12 +322,11 @@ export async function updatePost(
   }
 
   await redis.hmset(postId, updatedPayload)
+  revalidatePath('/drafts')
   return { success: true, postId }
 }
 
 export async function removePost(postId: string, userId: string) {
-  console.log('removePost', postId, userId)
-
   const { userId: session } = auth()
   const user = await currentUser()
 
@@ -308,11 +343,8 @@ export async function removePost(postId: string, userId: string) {
   await redis.del(postId)
   await redis.zrem(`user:posts:${user.id}`, postId)
 
+  revalidatePath('/drafts')
   return { success: true }
-}
-
-interface UnauthorizedError {
-  error: string
 }
 
 type GetPostsByUserResponse = ContentPost[]
@@ -323,16 +355,22 @@ export async function getPostsByUser(
   const { userId: session } = auth()
   const user = await currentUser()
 
+  if (!session || user?.id !== userId) {
+    return []
+  }
+
   try {
-    // if (!session || user?.id !== userId) {
-    //   return { error: 'Unauthorized' }
-    // }
     const postIds: string[] = await redis.zrange(
       `user:posts:${userId}`,
       0,
       -1,
       { rev: true }
     )
+
+    if (!postIds.length) {
+      return []
+    }
+
     const pipeline = redis.pipeline()
 
     for (const postId of postIds) {
@@ -341,10 +379,12 @@ export async function getPostsByUser(
 
     const posts = await pipeline.exec()
 
-    return posts.map((post: any) => ({
-      ...post,
-      published: post?.published === '1' ? true : false
-    }))
+    return (posts as (Record<string, any> | null)[])
+      .filter((post): post is Record<string, any> => Boolean(post && post.artifactId))
+      .map(post => ({
+        ...(post as ContentPost),
+        published: isPublishedValue(post.published)
+      }))
   } catch (error) {
     return []
   }
@@ -374,5 +414,6 @@ export async function deleteAllPostsByUser() {
 
   await pipeline.exec()
 
+  revalidatePath('/drafts')
   return { success: true, message: 'All posts deleted successfully' }
 }

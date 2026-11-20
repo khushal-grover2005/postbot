@@ -10,6 +10,7 @@ interface Artifact {
 interface ArtifactContextType {
   artifacts: Artifact[]
   addArtifact: (artifact: Artifact) => void
+  clearArtifacts: () => void
   selectedArtifact: Artifact | null
   setSelectedArtifact: (artifact: Artifact | null) => void
 }
@@ -24,22 +25,29 @@ export function ArtifactProvider({ children }: { children: React.ReactNode }) {
     null
   )
 
-  // const addArtifact = (artifact: Artifact) => {
-  //   setArtifacts(prevArtifacts => [...prevArtifacts, artifact])
-  // }
-
   const addArtifact = useCallback((artifact: Artifact) => {
     setArtifacts(prevArtifacts => {
-      if (!prevArtifacts.some(a => a.id === artifact.id)) {
+      const existingIndex = prevArtifacts.findIndex(a => a.id === artifact.id)
+      if (existingIndex === -1) {
         return [...prevArtifacts, artifact]
       }
-      return prevArtifacts
+      const updated = [...prevArtifacts]
+      updated[existingIndex] = artifact
+      return updated
     })
+
+    setSelectedArtifact(prev => (prev?.id === artifact.id ? artifact : prev))
+  }, [])
+
+  const clearArtifacts = useCallback(() => {
+    setArtifacts([])
+    setSelectedArtifact(null)
   }, [])
 
   const contextValue = {
     artifacts,
     addArtifact,
+    clearArtifacts,
     selectedArtifact,
     setSelectedArtifact
   }

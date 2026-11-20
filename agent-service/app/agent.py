@@ -2,20 +2,26 @@ import logging
 import os
 from dotenv import load_dotenv
 from typing import Optional, TypedDict
-from pydantic import BaseModel
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph, START
 
 from app.configuration import Configuration
-from app.prompts import (EDITOR_PROMPT, TWITTER_PROMPT, LINKEDIN_PROMPT, TWTTTER_CRITIQUE_PROMPT, LINKEDIN_CRITIQUE_PROMPT)
+from app.prompts import (
+    EDITOR_PROMPT,
+    TWITTER_PROMPT,
+    LINKEDIN_PROMPT,
+    TWITTER_CRITIQUE_PROMPT,
+    LINKEDIN_CRITIQUE_PROMPT,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 load_dotenv()
+
 
 def _create_llm():
     """Select an LLM provider from environment variables (Groq, Gemini, or OpenAI)."""
@@ -26,7 +32,7 @@ def _create_llm():
     if provider == "groq" or (not provider and groq_key):
         from langchain_groq import ChatGroq
 
-        model = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
+        model = os.getenv("LLM_MODEL", "openai/gpt-oss-20b")
         logger.info("Using Groq LLM: %s", model)
         return ChatGroq(model=model, api_key=groq_key, temperature=0)
 
@@ -46,12 +52,13 @@ llm = _create_llm()
 
 
 # Define the State for the Agent
-class Post(BaseModel):
-    """A post written in a different versions"""
-    
+class Post(TypedDict):
+    """A post written in different versions."""
+
     drafts: list[str]
     feedback: Optional[str]
-    
+
+
 class OverallState(TypedDict):
     user_text: str
     target_audience: str
@@ -60,7 +67,8 @@ class OverallState(TypedDict):
     linkedin_post: Post
     n_drafts: int
     workflow_status: str
-    
+
+
 # Define the nodes
 def editor_node(state: OverallState):
     logger.info("Entering editor_node with state: %s", state)
@@ -70,132 +78,168 @@ def editor_node(state: OverallState):
         {state["user_text"]}
         ```
     """.strip()
-    
+
     response = llm.invoke([SystemMessage(EDITOR_PROMPT), HumanMessage(prompt)])
     logger.info("editor_node response: %s", response.content)
-    
+
     return {"edit_text": response.content}
+
 
 def tweet_writer_node(state: OverallState):
     logger.info("Entering tweet_writer_node with state: %s", state)
     post = state["tweet"]
+    drafts = list(post.get("drafts") or [])
+    feedback = post.get("feedback") or ""
     feedback_prompt = (
         ""
-        if not post["feedback"]
+        if not feedback or not drafts
         else f"""
         Tweet:
         ```
-        {post["drafts"][-1]}
+        {drafts[-1]}
+        ```
+
+        Use the feedback to improve it:
+        ```
+        {feedback}
         ```
         """.strip()
     )
-    
+
     prompt = f"""
         text:
         ```
         {state["edit_text"]}
         ```
-        
+
         {feedback_prompt}
-        
+
         Target audience: {state["target_audience"]}
-        
+
         Write only the text for the post
     """.strip()
-    
+
     response = llm.invoke([SystemMessage(TWITTER_PROMPT), HumanMessage(prompt)])
     logger.info("tweet_writer_node response: %s", response.content)
-    post["drafts"].append(response.content)
-    return {"tweet": post}
-    
+    return {
+        "tweet": {
+            "drafts": [*drafts, response.content],
+            "feedback": feedback,
+        }
+    }
+
+
 def linkedin_writer_node(state: OverallState):
     logger.info("Entering linkedin_writer_node with state: %s", state)
     post = state["linkedin_post"]
+    drafts = list(post.get("drafts") or [])
+    feedback = post.get("feedback") or ""
     feedback_prompt = (
         ""
-        if not post["feedback"]
+        if not feedback or not drafts
         else f"""
         LinkedIn post:
         ```
-        {post["drafts"][-1]}
+        {drafts[-1]}
         ```
-        
+
         Use the feedback to improve it:
         ```
-        {post["feedback"]}
+        {feedback}
         ```
         """.strip()
     )
-    
+
     prompt = f"""
         text:
         ```
         {state["edit_text"]}
         ```
-        
+
         {feedback_prompt}
-        
+
         Target audience: {state["target_audience"]}
-        
+
         Write only the text for the post
     """.strip()
-    
+
     response = llm.invoke([SystemMessage(LINKEDIN_PROMPT), HumanMessage(prompt)])
     logger.info("linkedin_writer_node response: %s", response.content)
-    post["drafts"].append(response.content)
-    return {"linkedin_post": post}
+    return {
+        "linkedin_post": {
+            "drafts": [*drafts, response.content],
+            "feedback": feedback,
+        }
+    }
+
 
 def critique_tweet_node(state: OverallState):
     logger.info("Entering critique_tweet_node with state: %s", state)
     post = state["tweet"]
+    drafts = list(post.get("drafts") or [])
     prompt = f"""
         Full post:
         ```
         {state["edit_text"]}
         ```
-        
+
         Suggested tweet (critique this):
         ```
-        {post["drafts"][-1]}
+        {drafts[-1]}
         ```
-        
+
         Target audience: {state["target_audience"]}
     """.strip()
-    
-    response = llm.invoke([SystemMessage(TWTTTER_CRITIQUE_PROMPT), HumanMessage(prompt)])
+
+    response = llm.invoke([SystemMessage(TWITTER_CRITIQUE_PROMPT), HumanMessage(prompt)])
     logger.info("critique_tweet_node response: %s", response.content)
-    post["feedback"] = response.content
-    return {"tweet": post}
+    return {
+        "tweet": {
+            "drafts": drafts,
+            "feedback": response.content,
+        }
+    }
+
 
 def critique_linkedin_node(state: OverallState):
     logger.info("Entering critique_linkedin_node with state: %s", state)
     post = state["linkedin_post"]
+    drafts = list(post.get("drafts") or [])
     prompt = f"""
         Full post:
         ```
         {state["edit_text"]}
         ```
-        
+
         Suggested LinkedIn post (critique this):
         ```
-        {post["drafts"][-1]}
+        {drafts[-1]}
         ```
-        
+
         Target audience: {state["target_audience"]}
     """.strip()
 
     response = llm.invoke([SystemMessage(LINKEDIN_CRITIQUE_PROMPT), HumanMessage(prompt)])
     logger.info("critique_linkedin_node response: %s", response.content)
-    post["feedback"] = response.content
-    return {"linkedin_post": post}
+    return {
+        "linkedin_post": {
+            "drafts": drafts,
+            "feedback": response.content,
+        }
+    }
+
 
 def supervisor_node(state: OverallState):
     logger.info("Entering supervisor_node with state: %s", state)
-    if len(state["tweet"]["drafts"]) >= state["n_drafts"] and len(state["linkedin_post"]["drafts"]) >= state["n_drafts"]:
-        state["workflow_status"] = "completed"
+    if (
+        len(state["tweet"]["drafts"]) >= state["n_drafts"]
+        and len(state["linkedin_post"]["drafts"]) >= state["n_drafts"]
+    ):
+        status = "completed"
     else:
-        state["workflow_status"] = "in_progress"
-    return state
+        status = "in_progress"
+    return {**state, "workflow_status": status}
+
 
 # Define the Edges
 def should_rewrite(state: OverallState):
@@ -206,8 +250,9 @@ def should_rewrite(state: OverallState):
         logger.info("should_rewrite decision: END")
         return END
 
-    logger.info("should_rewrite decision: ['linkedin_critique', 'tweet_critique']")    
+    logger.info("should_rewrite decision: ['linkedin_critique', 'tweet_critique']")
     return ["linkedin_critique", "tweet_critique"]
+
 
 # Build a Graph
 workflow = StateGraph(OverallState, config_schema=Configuration)

@@ -4,8 +4,9 @@ import { Chat } from '@/components/chat'
 import { Button } from '@/components/ui/button'
 import { Message } from '@/lib/types'
 import { X } from 'lucide-react'
-import { useCallback } from 'react'
+import { useCallback, useEffect } from 'react'
 import { useArtifacts } from './contexts/artifact-context'
+
 interface ChatWithArtifactsProps {
   chatId: string
   userId: string | null
@@ -19,7 +20,14 @@ export function ChatWithArtifacts({
   missingKeys,
   initialMessages
 }: ChatWithArtifactsProps) {
-  const { addArtifact, selectedArtifact, setSelectedArtifact } = useArtifacts()
+  const { addArtifact, clearArtifacts, selectedArtifact, setSelectedArtifact } =
+    useArtifacts()
+
+  useEffect(() => {
+    return () => {
+      clearArtifacts()
+    }
+  }, [chatId, clearArtifacts])
 
   const closeArtifact = useCallback(() => {
     setSelectedArtifact(null)

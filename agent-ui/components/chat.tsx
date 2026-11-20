@@ -10,7 +10,7 @@ import { Message } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { useAIState, useUIState } from 'ai/rsc'
 import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 export interface ChatProps extends React.ComponentProps<'div'> {
@@ -35,19 +35,23 @@ export function Chat({
   className,
   userId,
   missingKeys,
-  onArtifactCreated,
-  onArtifactClicked
+  onArtifactCreated
 }: ChatProps) {
   const router = useRouter()
   const [input, setInput] = useState('')
-  const [messages, setMessages] = useUIState<typeof AI>()
-  const [aiState] = useAIState()
+  const [messages] = useUIState<typeof AI>()
+  const [aiState] = useAIState<typeof AI>()
+  const lastRefreshedLength = useRef<number>(0)
 
-  const [_, setNewChatId] = useLocalStorage('newChatId', chatId)
+  const [, setNewChatId] = useLocalStorage('newChatId', chatId)
 
   useEffect(() => {
-    const messagesLength = aiState.messages?.length
-    if (messagesLength === 2) {
+    const messagesLength = aiState.messages?.length || 0
+    if (
+      (messagesLength === 2 || messagesLength >= 4) &&
+      messagesLength !== lastRefreshedLength.current
+    ) {
+      lastRefreshedLength.current = messagesLength
       router.refresh()
     }
   }, [aiState.messages, router])
@@ -57,12 +61,12 @@ export function Chat({
   }, [chatId, setNewChatId])
 
   useEffect(() => {
-    missingKeys.map(key => {
+    missingKeys.forEach(key => {
       toast.error(`Missing ${key} environment variable!`)
     })
   }, [missingKeys])
 
-  const { messagesRef, scrollRef, visibilityRef, isAtBottom, scrollToBottom } =
+  const { messagesRef, scrollRef, isAtBottom, scrollToBottom } =
     useScrollAnchor()
 
   if (messages.length === 0) {
@@ -74,37 +78,29 @@ export function Chat({
   }
 
   return (
-    <div
-      className="group w-full overflow-auto pl-0 peer-[[data-state=open]]:lg:pl-[250px] peer-[[data-state=open]]:xl:pl-[300px] h-full "
-      ref={scrollRef}
-    >
+    <div className="group w-full overflow-auto h-full" ref={scrollRef}>
       <div
         className={cn('pb-[200px] pt-4 md:pt-10', className)}
         ref={messagesRef}
       >
-        {messages.length ? (
+        <React.Suspense fallback={null}>
           <ChatList
             messages={messages}
             isShared={false}
             userId={userId}
             onArtifactClick={onArtifactCreated}
           />
-        ) : (
-          <EmptyScreen />
-        )}
-        {/* <div className="w-full h-px" ref={visibilityRef} /> */}
+        </React.Suspense>
       </div>
 
-      {messages.length === 0 ? null : (
-        <ChatPanel
-          chatId={chatId}
-          input={input}
-          setInput={setInput}
-          isAtBottom={isAtBottom}
-          scrollToBottom={scrollToBottom}
-          onArtifactCreated={onArtifactCreated}
-        />
-      )}
+      <ChatPanel
+        chatId={chatId}
+        input={input}
+        setInput={setInput}
+        isAtBottom={isAtBottom}
+        scrollToBottom={scrollToBottom}
+        onArtifactCreated={onArtifactCreated}
+      />
     </div>
   )
 }

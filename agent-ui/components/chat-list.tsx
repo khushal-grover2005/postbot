@@ -1,3 +1,5 @@
+'use client'
+
 import { UIState } from '@/app/(chat)/actions'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
@@ -16,41 +18,29 @@ export interface ChatList {
   }) => void
 }
 
-export function ChatList({
-  messages,
-  userId,
-  isShared,
-  onArtifactClick
-}: ChatList) {
-  const { artifacts, addArtifact, selectedArtifact, setSelectedArtifact } =
-    useArtifacts()
-
-  if (!messages.length) {
-    return null
-  }
-
+export function ChatList({ messages }: ChatList) {
+  const { artifacts, setSelectedArtifact } = useArtifacts()
   const searchParams = useSearchParams()
   const artifactId = searchParams.get('artifactId')
 
   useEffect(() => {
-    console.log('artifactId', artifactId)
-    console.log('artifacts', artifacts)
-
     if (artifactId && typeof artifactId === 'string') {
       const artifact = artifacts.find(a => a.id === artifactId)
       if (artifact) {
         setSelectedArtifact(artifact)
       }
     }
-  }, [artifacts, setSelectedArtifact])
+  }, [artifactId, artifacts, setSelectedArtifact])
+
+  if (!messages.length) {
+    return null
+  }
 
   return (
     <div className="relative mx-auto max-w-2xl px-4">
       {messages.map((message, index) => (
         <div key={message.id} className={cn('my-4')}>
-          {React.cloneElement(message.display as React.ReactElement, {
-            onArtifactClick
-          })}
+          {message.display}
           {index < messages.length - 1 && <Separator className="hidden" />}
         </div>
       ))}

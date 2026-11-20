@@ -29,7 +29,7 @@ const fontDmSansDisplay: NextFontWithVariable = DM_Serif_Display({
 export const metadata = {
   metadataBase: process.env.VERCEL_URL
     ? new URL(`https://${process.env.VERCEL_URL}`)
-    : undefined,
+    : new URL('http://localhost:3000'),
   title: {
     default: 'PostBot 3000 AI Agent',
     template: `%s - PostBot 3000 AI Agent`

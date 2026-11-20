@@ -73,7 +73,7 @@ export const useScrollAnchor = () => {
         observer.disconnect()
       }
     }
-  })
+  }, [])
 
   return {
     messagesRef,
